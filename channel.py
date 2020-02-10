@@ -1,8 +1,12 @@
+from typing import Union
+
 import numpy as np
 from scipy.fft import fft, ifft, fftfreq
 
 
 from scipy.constants import c
+
+from .signal_define import Signal, WdmSignal
 
 
 class AwgnChannel(object):
@@ -11,7 +15,7 @@ class AwgnChannel(object):
         self.snr = snr
         self.snr_linear = 10 ** (self.snr / 10)
 
-    def prop(self, signal, power='measure'):
+    def prop(self, signal, power='measure')->Union[Signal,WdmSignal]:
         if signal.is_on_cuda:
             import cupy as np
         else:

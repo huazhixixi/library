@@ -176,6 +176,13 @@ class LMS(Equalizer):
         super(LMS, self).__init__(ntaps, lr, loops, backend=backend)
         self.train_symbols = train_symbols
         self.train_time = train_time
+        self.equalized_symbols = None
+
+    def calc_theroy_ber(self):
+        jmin = self.error_xpol_array[-1].mean()
+        print(10*np.log10((1-jmin)/jmin))
+
+
 
     def equalize(self, signal):
         import numpy as np
@@ -207,9 +214,10 @@ class LMS(Equalizer):
                 self.error_ypol_array[idx] = np.abs(error_ypol_array[0]) ** 2
 
         self.equalized_symbols = symbols
-        signal.samples = symbols
-        signal.fs = signal.baudrate
 
+        signal.samples = symbols
+        # signal.fs = signal.baudrate
+        signal.sps = 1
         return signal
 
     
@@ -361,4 +369,61 @@ def decision(decision_symbols,const):
             index_min = np.argmin(np.abs(symbol - const))
             res[row_index,index] = const[index_min]
     return res
+
+
+
+def syncsignal(symbol_tx, rx_signal, sps, visable=False):
+    '''
+        :param symbol_tx: 发送符号
+        :param sample_rx: 接收符号，会相对于发送符号而言存在滞后
+        :param sps: samples per symbol
+        :return: 收端符号移位之后的结果
+        # 不会改变原信号
+    '''
+    from scipy.signal import correlate
+    symbol_tx = np.atleast_2d(symbol_tx)
+    sample_rx = np.atleast_2d(rx_signal[:])
+    out = np.zeros_like(sample_rx)
+    corr_res = []
+    # assert sample_rx.ndim == 1
+    # assert symbol_tx.ndim == 1
+    assert sample_rx.shape[1] >= symbol_tx.shape[1]
+    for i in range(symbol_tx.shape[0]):
+        symbol_tx_temp = symbol_tx[i, :]
+        sample_rx_temp = sample_rx[i, :]
+
+        res = correlate(sample_rx_temp[::sps], symbol_tx_temp)
+        if visable:
+            plt.figure()
+            plt.plot(np.abs(np.atleast_2d(res)[0]))
+            plt.show()
+        index = np.argmax(np.abs(res))
+
+        corr_res.append(res)
+        out[i] = np.roll(sample_rx_temp, sps * (-index - 1 + symbol_tx_temp.shape[0]))
+    if isinstance(rx_signal,Signal):
+        rx_signal.samples = out
+        return rx_signal
+    else:
+        return out,corr_res
+
+def syncsignal_tx2rx(symbol_rx, symbol_tx):
+    from scipy.signal import correlate
+
+    symbol_tx = np.atleast_2d(symbol_tx)
+    symbol_rx = np.atleast_2d(symbol_rx)
+    out = np.zeros_like(symbol_tx)
+    # assert sample_rx.ndim == 1
+    # assert symbol_tx.ndim == 1
+    assert symbol_tx.shape[1] >= symbol_rx.shape[1]
+    for i in range(symbol_tx.shape[0]):
+        symbol_tx_temp = symbol_tx[i, :]
+        sample_rx_temp = symbol_rx[i, :]
+
+        res = correlate(symbol_tx_temp, sample_rx_temp)
+        #plt.plot(np.abs(res))
+        index = np.argmax(np.abs(res))
+
+        out[i] = np.roll(symbol_tx_temp, -index - 1 + sample_rx_temp.shape[0])
+    return out
 

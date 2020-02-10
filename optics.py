@@ -67,9 +67,9 @@ class WSS(object):
 
         '''
 
-        :param frequency_offset: value away from center [GHz]
-        :param bandwidth: 3-db Bandwidth [Ghz]
-        :param oft:GHZ
+        :param frequency_offset: value away from center [Hz]
+        :param bandwidth: 3-db Bandwidth [hz]
+        :param oft:HZ
         '''
         self.frequency_offset = frequency_offset / 1e9
         self.bandwidth = bandwidth / 1e9
