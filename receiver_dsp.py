@@ -1,6 +1,6 @@
 from .dsp_tools import _segment_axis
 from .filter_design import rrcos_pulseshaping_freq
-from .numba_core import cma_equalize_core
+from .numba_core import cma_equalize_core, lms_equalize_core
 import numpy as np
 import numba
 import matplotlib.pyplot as plt
@@ -52,98 +52,165 @@ def matched_filter(signal, roll_off)->DummySignal:
     return DummySignal(samples,signal.baudrate,signal.qam_order,signal.symbol,signal.is_on_cuda,signal.sps)
 
 
-
 class Equalizer(object):
-    def __init__(self,ntaps,lr,loops):
-        self.wxx = np.zeros((1,ntaps),dtype = np.complex)
-        self.wxy = np.zeros((1,ntaps),dtype = np.complex)
+    def __init__(self, ntaps, lr, loops, backend='mpl'):
+        self.backend = backend
+        self.wxx = np.zeros((1, ntaps), dtype=np.complex)
+        self.wxy = np.zeros((1, ntaps), dtype=np.complex)
 
-        self.wyx = np.zeros((1,ntaps),dtype = np.complex)
+        self.wyx = np.zeros((1, ntaps), dtype=np.complex)
 
-        self.wyy = np.zeros((1,ntaps),dtype = np.complex)
+        self.wyy = np.zeros((1, ntaps), dtype=np.complex)
 
-        self.wxx[0,ntaps//2] = 1
-        self.wyy[0,ntaps//2] = 1
-        
+        self.wxx[0, ntaps // 2] = 1
+        self.wyy[0, ntaps // 2] = 1
+
         self.ntaps = ntaps
         self.lr = lr
         self.loops = loops
         self.error_xpol_array = None
         self.error_ypol_array = None
-        
+
         self.equalized_symbols = None
-        
-    def equalize(self,signal):
-        
+
+    def equalize(self, signal):
+
         raise NotImplementedError
-        
-    def scatterplot(self,sps=1):
+
+    def scatterplot(self, sps=1):
         import matplotlib.pyplot as plt
         fignumber = self.equalized_symbols.shape[0]
-        fig,axes = plt.subplots(nrows = 1,ncols = fignumber)
-        for ith,ax in enumerate(axes):
-            ax.scatter(self.equalized_symbols[ith,::sps].real,self.equalized_symbols[ith,::sps].imag,s=1,c='b')
+        fig, axes = plt.subplots(nrows=1, ncols=fignumber)
+
+        for ith, ax in enumerate(axes):
+            ax.scatter(self.equalized_symbols[ith, ::sps].real, self.equalized_symbols[ith, ::sps].imag, s=1, c='b')
             ax.set_aspect('equal', 'box')
 
-            ax.set_xlim([self.equalized_symbols[ith,::sps].real.min()-0.1,self.equalized_symbols[ith,::sps].real.max()+0.1])
-            ax.set_ylim([self.equalized_symbols[ith,::sps].imag.min()-0.1,self.equalized_symbols[ith,::sps].imag.max()+0.1])
+            ax.set_xlim(
+                [self.equalized_symbols[ith, ::sps].real.min() - self.equalized_symbols[ith, ::sps].real.min() / 4,
+                 self.equalized_symbols[ith, ::sps].real.max() + self.equalized_symbols[ith, ::sps].real.max() / 4])
+            ax.set_ylim(
+                [self.equalized_symbols[ith, ::sps].imag.min() - self.equalized_symbols[ith, ::sps].imag.min() / 4,
+                 self.equalized_symbols[ith, ::sps].imag.max() + self.equalized_symbols[ith, ::sps].imag.max() / 4])
+            ax.set_title('scatterplot after Equalizer')
 
         plt.tight_layout()
-        plt.show()
-    
+        if self.backend == 'mpl':
+            plt.show()
+        else:
+            import visdom
+            vis = visdom.Visdom(env='receiver_dsp')
+            vis.matplot(fig)
+
     def plot_error(self):
         fignumber = self.equalized_symbols.shape[0]
-        fig,axes = plt.subplots(figsize=(8,4),nrows = 1,ncols = fignumber)
-        for ith,ax in enumerate(axes):
-            ax.plot(self.error_xpol_array[0],c='b',lw=1)
+        fig, axes = plt.subplots(figsize=(8, 4), nrows=1, ncols=fignumber)
+        for ith, ax in enumerate(axes):
+            ax.plot(self.error_xpol_array[0], c='b', lw=1)
+        fig.suptitle("Error Curve of the equalizer")
         plt.tight_layout()
-        plt.show()
-        
+        if self.backend == 'mpl':
+            plt.show()
+        else:
+            import visdom
+            vis = visdom.Visdom(env='receiver_dsp')
+            vis.matplot(fig)
+
     def plot_freq_response(self):
-        from scipy.fftpack import fft,fftshift
-        freq_res =  fftshift(fft(self.wxx)),fftshift(fft(self.wxy)),fftshift(fft(self.wyx)),fftshift(fft(self.wyy))
+        from scipy.fftpack import fft, fftshift
+        freq_res = fftshift(fft(self.wxx)), fftshift(fft(self.wxy)), fftshift(fft(self.wyx)), fftshift(fft(self.wyy))
         import matplotlib.pyplot as plt
-        fig,axes = plt.subplots(2,2)
-        for idx,row in enumerate(axes.flatten()):
+        fig, axes = plt.subplots(2, 2)
+        for idx, row in enumerate(axes.flatten()):
             row.plot(np.abs(freq_res[idx][0]))
-            row.set_title(f"{['wxx','wxy','wyx','wyy'][idx]}")
+            row.set_title(f"{['wxx', 'wxy', 'wyx', 'wyy'][idx]}")
+        fig.suptitle("Freq_response of the Equazlizer")
+
         plt.tight_layout()
-        plt.show()
-        
+        if self.backend == 'mpl':
+            plt.show()
+        else:
+
+            import visdom
+            vis = visdom.Visdom(env='receiver_dsp')
+            vis.matplot(fig)
+
     def freq_response(self):
-        from scipy.fftpack import fft,fftshift
-        freq_res =  fftshift(fft(self.wxx)),fftshift(fft(self.wxy)),fftshift(fft(self.wyx)),fftshift(fft(self.wyy))
+        from scipy.fftpack import fft, fftshift
+        freq_res = fftshift(fft(self.wxx)), fftshift(fft(self.wxy)), fftshift(fft(self.wyx)), fftshift(fft(self.wyy))
         return freq_res
 
-    
+
 class CMA(Equalizer):
-    
-    
-    def __init__(self,ntaps,lr,loops=3):
-        super().__init__(ntaps,lr,loops)
-       
-        
-    
-    def equalize(self,signal):
-        signal.cpu()
+
+    def __init__(self, ntaps, lr, loops=3, backend='mpl'):
+        super().__init__(ntaps, lr, loops, backend)
+
+    def equalize(self, signal):
         import numpy as np
-            
-        samples_xpol = _segment_axis(signal[0],self.ntaps, self.ntaps-signal.sps)
-        samples_ypol = _segment_axis(signal[1],self.ntaps, self.ntaps-signal.sps)
-        
-        self.error_xpol_array = np.zeros((self.loops,len(samples_xpol)))
-        self.error_ypol_array = np.zeros((self.loops,len(samples_xpol)))
-        
+
+        samples_xpol = _segment_axis(signal[0], self.ntaps, self.ntaps - signal.sps)
+        samples_ypol = _segment_axis(signal[1], self.ntaps, self.ntaps - signal.sps)
+
+        self.error_xpol_array = np.zeros((self.loops, len(samples_xpol)))
+        self.error_ypol_array = np.zeros((self.loops, len(samples_xpol)))
+
         for idx in range(self.loops):
             symbols, self.wxx, self.wxy, self.wyx, \
             self.wyy, error_xpol_array, error_ypol_array \
-            = cma_equalize_core(samples_xpol,samples_ypol,\
-                                self.wxx,self.wyy,self.wxy,self.wyx,self.lr)
-            
-            self.error_xpol_array[idx] = np.abs(error_xpol_array[0])**2
-            self.error_ypol_array[idx] = np.abs(error_ypol_array[0])**2
-        
+                = cma_equalize_core(samples_xpol, samples_ypol,
+                                    self.wxx, self.wyy, self.wxy, self.wyx, self.lr)
+
+            self.error_xpol_array[idx] = np.abs(error_xpol_array[0]) ** 2
+            self.error_ypol_array[idx] = np.abs(error_ypol_array[0]) ** 2
+
         self.equalized_symbols = symbols
+        signal.samples = symbols
+        return signal
+
+
+class LMS(Equalizer):
+
+    def __init__(self, ntaps, lr, loops, train_symbols, train_time, backend='mpl'):
+
+        super(LMS, self).__init__(ntaps, lr, loops, backend=backend)
+        self.train_symbols = train_symbols
+        self.train_time = train_time
+
+    def equalize(self, signal):
+        import numpy as np
+        self.train_symbols = self.train_symbols[:, self.ntaps // 2 // signal.sps:]
+        samples_xpol = _segment_axis(signal[0], self.ntaps, self.ntaps - signal.sps)
+        samples_ypol = _segment_axis(signal[1], self.ntaps, self.ntaps - signal.sps)
+
+        self.error_xpol_array = np.zeros((self.loops, len(samples_xpol)))
+        self.error_ypol_array = np.zeros((self.loops, len(samples_xpol)))
+        # ex, ey, train_symbol, wxx, wyy, wxy, wyx, mu_train, mu_dd, is_train):
+        assert self.loops >= 1
+        for idx in range(self.loops):
+            if self.train_time:
+                symbols, self.wxx, self.wxy, self.wyx, \
+                self.wyy, error_xpol_array, error_ypol_array \
+                    = lms_equalize_core(samples_xpol, samples_ypol, self.train_symbols,
+                                        self.wxx, self.wyy, self.wxy, self.wyx, self.lr[0], None, True)
+
+                self.error_xpol_array[idx] = np.abs(error_xpol_array[0]) ** 2
+                self.error_ypol_array[idx] = np.abs(error_ypol_array[0]) ** 2
+                self.train_time -= 1
+            else:
+                symbols, self.wxx, self.wxy, self.wyx, \
+                self.wyy, error_xpol_array, error_ypol_array \
+                    = lms_equalize_core(samples_xpol, samples_ypol, None,
+                                        self.wxx, self.wyy, self.wxy, self.wyx, None, self.lr[1], False)
+
+                self.error_xpol_array[idx] = np.abs(error_xpol_array[0]) ** 2
+                self.error_ypol_array[idx] = np.abs(error_ypol_array[0]) ** 2
+
+        self.equalized_symbols = symbols
+        signal.samples = symbols
+        signal.fs = signal.baudrate
+
+        return signal
 
     
 class PhaseRecovery(object):
